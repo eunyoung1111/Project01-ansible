@@ -1,0 +1,10 @@
+# deploy-network.yml
+- hosts: localhost
+  connection: local
+  vars_files:
+    - ./global_vars/all_vars
+  roles:
+    - network    # 1. VPC, Subnet, IGW, NAT
+    - iam        # 2. SSM IAM Role & Profile (추가 필수)
+    - security   # 3. Security Groups (22번 포트 제외)
+    # 이후 로드밸런서, EC2 순으로 추가

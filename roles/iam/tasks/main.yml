@@ -1,0 +1,24 @@
+---
+# tasks file for iam
+# roles/iam/tasks/main.yml
+- name: Create IAM Role for SSM
+  community.aws.iam_role:
+    name: "{{ prefix }}-ssm-role"
+    assume_role_policy_document: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Principal": { "Service": "ec2.amazonaws.com" },
+            "Effect": "Allow"
+          }
+        ]
+      }
+    managed_policies:
+      - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+- name: Create IAM Instance Profile
+  community.aws.iam_instance_profile:
+    name: "{{ prefix }}-ssm-profile"
+    role: "{{ prefix }}-ssm-role"

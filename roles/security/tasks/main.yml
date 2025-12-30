@@ -1,0 +1,63 @@
+---
+# tasks file for security
+---
+# 0. VPC ID 가져오기 (이전 단계에서 register한 결과가 없을 경우를 대비해 다시 조회)
+- name: Get VPC info
+  amazon.aws.ec2_vpc_net_info:
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "{{ prefix }}-vpc"
+  register: vpc_info
+
+- set_fact:
+    vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
+
+# 1. ALB 보안 그룹 (외부 노출)
+- name: Create ALB Security Group
+  amazon.aws.ec2_security_group:
+    name: "{{ prefix }}-alb-sg"
+    description: "Allow HTTP/HTTPS from Internet"
+    vpc_id: "{{ vpc_id }}"
+    region: "{{ region }}"
+    rules:
+      - proto: tcp
+        from_port: 80
+        to_port: 80
+        cidr_ip: 0.0.0.0/0
+      - proto: tcp
+        from_port: 443
+        to_port: 443
+        cidr_ip: 0.0.0.0/0
+    tags:
+      Name: "{{ prefix }}-alb-sg"
+  register: alb_sg
+
+# 2. Jenkins 보안 그룹
+- name: Create Jenkins Security Group
+  amazon.aws.ec2_security_group:
+    name: "{{ prefix }}-jenkins-sg"
+    description: "Allow 8080 from ALB and GitHub"
+    vpc_id: "{{ vpc_id }}"
+    region: "{{ region }}"
+    rules:
+      - proto: tcp
+        from_port: 8080
+        to_port: 8080
+        group_id: "{{ alb_sg.group_id }}" # ALB를 거쳐서 들어오는 트래픽만 허용
+    tags:
+      Name: "{{ prefix }}-jenkins-sg"
+
+# 3. Target EC2 보안 그룹 (서비스 포트)
+- name: Create Target EC2 Security Group
+  amazon.aws.ec2_security_group:
+    name: "{{ prefix }}-target-sg"
+    description: "Allow HTTP from ALB only"
+    vpc_id: "{{ vpc_id }}"
+    region: "{{ region }}"
+    rules:
+      - proto: tcp
+        from_port: 80
+        to_port: 80
+        group_id: "{{ alb_sg.group_id }}" # ALB 보안그룹을 가진 대상만 접속 가능
+    tags:
+      Name: "{{ prefix }}-target-sg"

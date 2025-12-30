@@ -1,0 +1,7 @@
+# .gitignore
+*.pem
+*.token
+scripts/token.sh
+.ansible/
+*.log
+global_vars/all_vars

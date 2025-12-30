@@ -1,0 +1,8 @@
+#teminates-netwokr.yml
+
+- hosts: localhost
+  connection: localhost
+  vars_files:
+    - global_vars/all_vars
+  tasks:
+  - include_role: { name: network, tasks_from: terminate }
