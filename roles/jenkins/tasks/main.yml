@@ -1,2 +1,48 @@
 ---
-# tasks file for jenkins
+# 1. 젠킨스가 들어갈 프라이빗 서브넷 정보 가져오기
+- name: Get Private Subnet info
+  amazon.aws.ec2_vpc_subnet_info:
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "{{ prefix }}-priv-a"
+  register: priv_subnet
+
+# 2. 젠킨스용 보안 그룹 정보 가져오기
+- name: Get Jenkins SG info
+  amazon.aws.ec2_security_group_info:
+    region: "{{ region }}"
+    filters:
+      "group-name": "{{ prefix }}-jenkins-sg"
+  register: jenkins_sg
+
+# 3. 최신 Ubuntu 22.04 LTS AMI ID 조회
+- name: Find latest Ubuntu 22.04 AMI
+  amazon.aws.ec2_ami_info:
+    region: "{{ region }}"
+    owners: ["099720109477"]
+    filters:
+      name: "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"
+      architecture: x86_64
+  register: ubuntu_ami
+
+# 4. Jenkins EC2 인스턴스 생성
+- name: Launch Jenkins EC2 Instance
+  amazon.aws.ec2_instance:
+    name: "{{ prefix }}-jenkins"
+    region: "{{ region }}"
+    # 수정된 부분: 리스트의 마지막 항목에서 image_id 키값을 직접 참조합니다.
+    image_id: "{{ (ubuntu_ami.images | sort(attribute='creation_date') | last).image_id }}"
+    instance_type: "t3.large"
+    key_name: "{{ key_name }}"
+    vpc_subnet_id: "{{ priv_subnet.subnets[0].id }}"
+    security_groups: ["{{ jenkins_sg.security_groups[0].group_id }}"]
+    iam_instance_profile: "{{ prefix }}-ssm-profile"
+    volumes:
+      - device_name: /dev/sda1
+        ebs:
+          volume_size: 25
+          volume_type: gp3
+          delete_on_termination: true
+    tags:
+      Role: "jenkins"
+  register: jenkins_ec2

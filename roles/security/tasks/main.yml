@@ -60,3 +60,9 @@
         group_id: "{{ alb_sg.group_id }}" # ALB 보안그룹을 가진 대상만 접속 가능
     tags:
       Name: "{{ prefix }}-target-sg"
+
+# 4. ALB SG ID를 다른 role에서 쓰기 위해 변수로 고정
+- name: Set ALB SG ID
+  set_fact:
+    alb_sg_id: "{{ alb_sg.group_id }}"
+

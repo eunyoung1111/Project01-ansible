@@ -1,2 +1,44 @@
 ---
-# tasks file for loadbalance
+# 1. ALB용 보안 그룹 정보 실시간 조회
+- name: Get ALB Security Group info
+  amazon.aws.ec2_security_group_info:
+    region: "{{ region }}"
+    filters:
+      vpc-id: "{{ vpc_result.vpc.id }}"
+      group-name: "{{ prefix }}-alb-sg"
+  register: alb_sg_info
+
+# 2. 젠킨스용 대상 그룹(Target Group) 생성
+- name: Create Jenkins Target Group
+  community.aws.elb_target_group:
+    name: "{{ prefix }}-jenkins-tg"
+    protocol: http
+    port: 8080
+    vpc_id: "{{ vpc_result.vpc.id }}"
+    region: "{{ region }}"
+    health_check_path: /login
+    health_check_protocol: HTTP
+    successful_response_codes: "200"
+    targets:
+      - Id: "{{ jenkins_ec2.instances[0].instance_id }}"
+    state: present
+  register: target_group
+
+# 3. 애플리케이션 로드밸런서(ALB) 및 리스너 통합 생성
+- name: Create Application Load Balancer
+  community.aws.elb_application_lb:
+    name: "{{ prefix }}-alb"
+    # 조회한 보안 그룹 ID를 직접 사용합니다.
+    security_groups: ["{{ alb_sg_info.security_groups[0].group_id }}"]
+    subnets:
+      - "{{ subnet_results.results | selectattr('item.name', 'equalto', 'pub-a') | map(attribute='subnet.id') | first }}"
+      - "{{ subnet_results.results | selectattr('item.name', 'equalto', 'pub-c') | map(attribute='subnet.id') | first }}"
+    region: "{{ region }}"
+    listeners:
+      - Protocol: HTTP
+        Port: 80
+        DefaultActions:
+          - Type: forward
+            TargetGroupArn: "{{ target_group.target_group_arn }}"
+    state: present
+  register: alb_result
