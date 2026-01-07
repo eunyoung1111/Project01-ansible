@@ -32,23 +32,40 @@
   loop: "{{ subnets }}"
   register: subnet_results
 
-# 4. NAT Gateway용 탄력적 IP(EIP) 생성
+# 4. NAT Gateway용 탄력적 IP(EIP) 생성 (기존과 동일하지만 멱등성 보장 확인)
 - name: Allocate EIP for NAT Gateway
   amazon.aws.ec2_eip:
     region: "{{ region }}"
     tags:
       Name: "{{ prefix }}-nat-eip"
+    state: present
   register: nat_eip
 
-# 5. NAT Gateway 생성
-- name: Create NAT Gateway
+# 5-1. 기존 NAT 게이트웨이 존재 여부 확인
+- name: Get NAT Gateway info
+  amazon.aws.ec2_vpc_nat_gateway_info:
+    region: "{{ region }}"
+    filters:
+      subnet-id: "{{ (subnet_results.results | selectattr('item.name', 'equalto', 'pub-a') | first).subnet.id }}"
+      state: ['available', 'pending']
+  register: existing_nat_gw
+
+# 5-2. NAT Gateway 생성 (변수 참조 방식 변경)
+- name: Create NAT Gateway if not exists
   amazon.aws.ec2_vpc_nat_gateway:
-    subnet_id: "{{ subnet_results.results | selectattr('item.name', 'equalto', 'pub-a') | map(attribute='subnet.id') | first }}"
+    subnet_id: "{{ (subnet_results.results | selectattr('item.name', 'equalto', 'pub-a') | first).subnet.id }}"
     allocation_id: "{{ nat_eip.allocation_id }}"
     region: "{{ region }}"
     wait: yes
-    if_exist_do_not_create: yes
+    wait_timeout: 600
+  # .nat_gateways가 없을 경우를 대비해 default([])를 사용합니다.
+  when: (existing_nat_gw.nat_gateways | default([])) | length == 0
   register: nat_gw_result
+
+# 5-3. 라우팅 테이블에서 사용할 ID 확정
+- name: Set NAT Gateway ID fact
+  set_fact:
+    target_nat_gateway_id: "{{ nat_gw_result.nat_gateway_id if (existing_nat_gw.nat_gateways | default([])) | length == 0 else existing_nat_gw.nat_gateways[0].nat_gateway_id }}"
 
 # 6. Public 라우팅 테이블
 - name: Create Public Route Table

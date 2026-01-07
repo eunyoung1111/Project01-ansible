@@ -30,19 +30,15 @@
   amazon.aws.ec2_instance:
     name: "{{ prefix }}-jenkins"
     region: "{{ region }}"
-    # 수정된 부분: 리스트의 마지막 항목에서 image_id 키값을 직접 참조합니다.
     image_id: "{{ (ubuntu_ami.images | sort(attribute='creation_date') | last).image_id }}"
     instance_type: "t3.large"
     key_name: "{{ key_name }}"
     vpc_subnet_id: "{{ priv_subnet.subnets[0].id }}"
     security_groups: ["{{ jenkins_sg.security_groups[0].group_id }}"]
-    iam_instance_profile: "{{ prefix }}-ssm-profile"
-    volumes:
-      - device_name: /dev/sda1
-        ebs:
-          volume_size: 25
-          volume_type: gp3
-          delete_on_termination: true
+    # [수정] IAM 역할 섹션에서 만든 이름과 일치시킵니다.
+    iam_instance_profile: "{{ prefix }}-ec2-profile" 
+    wait: yes # 인스턴스가 생성될 때까지 기다리도록 추가 (안정성)
     tags:
       Role: "jenkins"
+      Name: "{{ prefix }}-jenkins"
   register: jenkins_ec2

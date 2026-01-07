@@ -1,2 +1,74 @@
 ---
-# tasks file for asg
+# 1. 최신 Amazon Linux 2023 AMI ID 조회
+- name: Find Latest Amazon Linux 2023 AMI
+  amazon.aws.ec2_ami_info:
+    owners: ["137112412989"]
+    filters:
+      name: "al2023-ami-2023.*-x86_64"
+    region: "{{ region }}"
+  register: al2023_ami
+
+# 2. WAS용 보안 그룹 ID 조회
+- name: Get WAS Security Group info
+  amazon.aws.ec2_security_group_info:
+    region: "{{ region }}"
+    filters:
+      group-name: "{{ prefix }}-target-sg"
+  register: was_sg_info
+
+# 3. WAS용 대상 그룹 ARN 조회
+- name: Get WAS Target Group info
+  community.aws.elb_target_group_info:
+    region: "{{ region }}"
+    names:
+      - "{{ prefix }}-was-tg" # 이 이름이 콘솔의 이름과 정확히 일치해야 합니다!
+  register: was_tg_info
+
+# [추가] 조회 결과가 비었는지 확인하기 위한 디버그 태스크
+- name: Debug WAS Target Group Info
+  debug:
+    msg: "조회된 대상 그룹: {{ was_tg_info.target_groups }}"
+
+- name: Check if WAS Target Group exists
+  ansible.builtin.fail:
+    msg: "대상 그룹 '{{ prefix }}-was-tg'를 찾을 수 없습니다. 이름을 확인하세요."
+  when: was_tg_info.target_groups | length == 0
+
+# 4. 프라이빗 서브넷 정보 조회
+- name: Get Private Subnet info for ASG
+  amazon.aws.ec2_vpc_subnet_info:
+    region: "{{ region }}"
+    filters:
+      "tag:Name": ["{{ prefix }}-priv-a", "{{ prefix }}-priv-c"]
+  register: priv_subnets
+
+# 5. 시작 템플릿(Launch Template) 생성
+- name: Create Launch Template
+  amazon.aws.ec2_launch_template:
+    name: "{{ prefix }}-template"
+    image_id: "{{ (al2023_ami.images | sort(attribute='creation_date') | last).image_id }}"
+    instance_type: "{{ instance_type }}"
+    key_name: "{{ key_name }}"
+    iam_instance_profile: "{{ prefix }}-ec2-profile"
+    security_group_ids: ["{{ was_sg_info.security_groups[0].group_id }}"]
+    user_data: "{{ lookup('template', 'user_data.sh.j2') | b64encode }}"
+    region: "{{ region }}"
+    state: present
+# 6. 오토스케일링 그룹(ASG) 생성 (에러 메시지 기반 최종 교정)
+- name: Create Auto Scaling Group
+  amazon.aws.autoscaling_group:
+    name: "{{ prefix }}-was"
+    # 에러 메시지에서 지원한다고 명시된 'launch_template' 파라미터를 사용합니다.
+    # 앤서블 2.15/컬렉션 8.x대에서는 아래 형식이 표준입니다.
+    launch_template:
+      launch_template_name: "{{ prefix }}-template"
+      version: "$Latest"
+    min_size: 1
+    max_size: 3
+    desired_capacity: 1
+    vpc_zone_identifier: "{{ priv_subnets.subnets | map(attribute='id') | list }}"
+    target_group_arns: "{{ was_tg_info.target_groups | map(attribute='target_group_arn') | list }}"
+    health_check_type: ELB
+    health_check_period: 300
+    region: "{{ region }}"
+    state: present

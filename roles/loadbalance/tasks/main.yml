@@ -1,44 +1,89 @@
 ---
-# 1. ALB용 보안 그룹 정보 실시간 조회
-- name: Get ALB Security Group info
-  amazon.aws.ec2_security_group_info:
+# 1. VPC 정보 조회
+- name: Get VPC info
+  amazon.aws.ec2_vpc_net_info:
+    region: "{{ region }}"
+    filters: { "tag:Name": "{{ prefix }}-vpc" }
+  register: vpc_info
+
+# 2. 젠킨스 인스턴스 정보 조회
+- name: Get Info for Jenkins Instance
+  amazon.aws.ec2_instance_info:
     region: "{{ region }}"
     filters:
-      vpc-id: "{{ vpc_result.vpc.id }}"
-      group-name: "{{ prefix }}-alb-sg"
-  register: alb_sg_info
+      "tag:Name": "{{ prefix }}-jenkins"
+      instance-state-name: ["running"]
+  register: jenkins_info
 
-# 2. 젠킨스용 대상 그룹(Target Group) 생성
+# 3. 젠킨스용 대상 그룹 생성
 - name: Create Jenkins Target Group
   community.aws.elb_target_group:
     name: "{{ prefix }}-jenkins-tg"
     protocol: http
     port: 8080
-    vpc_id: "{{ vpc_result.vpc.id }}"
+    vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
     region: "{{ region }}"
-    health_check_path: /login
+    health_check_path: /jenkins/login
     health_check_protocol: HTTP
-    successful_response_codes: "200"
     targets:
-      - Id: "{{ jenkins_ec2.instances[0].instance_id }}"
+      - Id: "{{ jenkins_info.instances[0].instance_id }}"
     state: present
-  register: target_group
+  register: jenkins_tg
 
-# 3. 애플리케이션 로드밸런서(ALB) 및 리스너 통합 생성
-- name: Create Application Load Balancer
-  community.aws.elb_application_lb:
+# 4. WAS용 대상 그룹 생성
+- name: Create WAS Target Group
+  community.aws.elb_target_group:
+    name: "{{ prefix }}-was-tg"
+    protocol: http
+    port: 8080
+    vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
+    region: "{{ region }}"
+    health_check_path: /
+    health_check_protocol: HTTP
+    state: present
+  register: was_tg
+
+# # 5. [수정] ALB 생성 (기본 리스너만 정의)
+# - name: Create Application Load Balancer
+#   amazon.aws.elb_application_lb: # 더 안정적인 amazon.aws 모듈 사용 권장
+#     name: "{{ prefix }}-alb"
+#     security_groups: ["{{ alb_sg_id }}"]
+#     subnets:
+#       - "{{ (subnet_results.results | selectattr('item.name', 'equalto', 'pub-a') | first).subnet.id }}"
+#       - "{{ (subnet_results.results | selectattr('item.name', 'equalto', 'pub-c') | first).subnet.id }}"
+#     region: "{{ region }}"
+#     listeners:
+#       - Protocol: HTTP
+#         Port: 80
+#         DefaultActions:
+#           - Type: forward
+#             TargetGroupArn: "{{ was_tg.target_group_arn }}"
+#     state: present
+#   register: alb_result
+
+# 5. [통합] ALB 생성 및 리스너 규칙을 한꺼번에 정의
+- name: Create ALB with Path Rules
+  amazon.aws.elb_application_lb:
     name: "{{ prefix }}-alb"
-    # 조회한 보안 그룹 ID를 직접 사용합니다.
-    security_groups: ["{{ alb_sg_info.security_groups[0].group_id }}"]
+    security_groups: ["{{ alb_sg_id }}"]
     subnets:
-      - "{{ subnet_results.results | selectattr('item.name', 'equalto', 'pub-a') | map(attribute='subnet.id') | first }}"
-      - "{{ subnet_results.results | selectattr('item.name', 'equalto', 'pub-c') | map(attribute='subnet.id') | first }}"
+      - "{{ (subnet_results.results | selectattr('item.name', 'equalto', 'pub-a') | first).subnet.id }}"
+      - "{{ (subnet_results.results | selectattr('item.name', 'equalto', 'pub-c') | first).subnet.id }}"
     region: "{{ region }}"
     listeners:
       - Protocol: HTTP
         Port: 80
         DefaultActions:
           - Type: forward
-            TargetGroupArn: "{{ target_group.target_group_arn }}"
+            TargetGroupArn: "{{ was_tg.target_group_arn }}"
+        # [핵심] 별도 모듈 대신 여기서 Rules를 정의합니다.
+        Rules:
+          - Priority: 1
+            Conditions:
+              - Field: path-pattern
+                Values: ['/jenkins*']
+            Actions:
+              - Type: forward
+                TargetGroupArn: "{{ jenkins_tg.target_group_arn }}"
     state: present
   register: alb_result

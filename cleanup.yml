@@ -1,0 +1,119 @@
+---
+- name: Cleanup All Project01 Resources
+  hosts: localhost
+  connection: local
+  vars_files:
+    - ./global_vars/all_vars # prefix, region, domain 등 변수 활용
+  
+  tasks:
+    # 1. DNS 레코드 삭제 (Route 53)
+    - name: Remove Route 53 DNS Records
+      amazon.aws.route53:
+        state: absent
+        zone: "{{ domain_name }}"
+        record: "*.{{ domain_name }}"
+        type: A
+        wait: yes
+      ignore_errors: yes
+
+    # 2. Auto Scaling Group 삭제 (가장 먼저 삭제해야 인스턴스들이 종료됨)
+    - name: Remove Auto Scaling Group
+      amazon.aws.autoscaling_group:
+        name: "{{ prefix }}-was"
+        state: absent
+        wait_timeout: 600
+        region: "{{ region }}"
+      ignore_errors: yes
+
+    # 3. Launch Template 삭제
+    - name: Remove Launch Template
+      amazon.aws.ec2_launch_template:
+        name: "{{ prefix }}-template"
+        state: absent
+        region: "{{ region }}"
+      ignore_errors: yes
+
+    # 4. ALB 및 Target Groups 삭제
+    - name: Remove Application Load Balancer
+      amazon.aws.elb_application_lb:
+        name: "{{ prefix }}-alb"
+        state: absent
+        region: "{{ region }}"
+        wait: yes
+      ignore_errors: yes
+
+    - name: Remove Target Groups
+      community.aws.elb_target_group:
+        name: "{{ item }}"
+        state: absent
+        region: "{{ region }}"
+      loop:
+        - "{{ prefix }}-was-tg"
+        - "{{ prefix }}-jenkins-tg"
+      ignore_errors: yes
+
+    # 5. Jenkins EC2 인스턴스 삭제
+    - name: Terminate Jenkins Instance
+      amazon.aws.ec2_instance:
+        filters:
+          "tag:Name": "{{ prefix }}-jenkins"
+        state: absent
+        region: "{{ region }}"
+        wait: yes
+      ignore_errors: yes
+
+    # 6. NAT Gateway 삭제 (시간이 다소 소요됨)
+    - name: Get NAT Gateway Info
+      amazon.aws.ec2_vpc_nat_gateway_info:
+        region: "{{ region }}"
+        filters:
+          state: ['available', 'pending']
+      register: nat_info
+
+    - name: Remove NAT Gateway
+      amazon.aws.ec2_vpc_nat_gateway:
+        nat_gateway_id: "{{ nat_info.nat_gateways[0].nat_gateway_id }}"
+        state: absent
+        region: "{{ region }}"
+        wait: yes
+      when: nat_info.nat_gateways | length > 0
+      ignore_errors: yes
+
+    # 7. EIP 릴리즈 (NAT GW 삭제 완료 후 가능)
+    - name: Release EIP
+      amazon.aws.ec2_eip:
+        device_id: "" # 연결 해제
+        region: "{{ region }}"
+        tag_name: "Name"
+        tag_value: "{{ prefix }}-nat-eip"
+        state: absent
+      ignore_errors: yes
+
+    # 8. 보안 그룹 삭제 (의존성 때문에 인스턴스 종료 후 삭제)
+    - name: Remove Security Groups
+      amazon.aws.ec2_security_group:
+        name: "{{ item }}"
+        state: absent
+        region: "{{ region }}"
+      loop:
+        - "{{ prefix }}-jenkins-sg"
+        - "{{ prefix }}-target-sg"
+        - "{{ prefix }}-alb-sg"
+      ignore_errors: yes
+
+    # 9. VPC 네트워크 리소스 삭제 (서브넷, IGW, VPC)
+    - name: Remove Subnets
+      amazon.aws.ec2_vpc_subnet:
+        region: "{{ region }}"
+        vpc_id: "{{ item.vpc_id }}" # 조회가 필요할 수 있음
+        cidr: "{{ item.cidr }}"
+        state: absent
+      loop: "{{ subnet_list }}" # 변수 파일의 서브넷 리스트 활용
+      ignore_errors: yes
+
+    - name: Remove VPC (Final Step)
+      amazon.aws.ec2_vpc_net:
+        name: "{{ prefix }}-vpc"
+        region: "{{ region }}"
+        state: absent
+      ignore_errors: yes
