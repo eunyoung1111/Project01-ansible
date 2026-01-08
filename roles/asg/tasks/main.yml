@@ -89,7 +89,7 @@
     name: "{{ prefix }}-was-asg" 
     launch_template:
       launch_template_name: "{{ prefix }}-template"
-      version: "$Latest" # 최신 버전의 템플릿을 항상 사용합니다.
+      version: "$Latest" 
     min_size: 1
     max_size: 3
     desired_capacity: 1
