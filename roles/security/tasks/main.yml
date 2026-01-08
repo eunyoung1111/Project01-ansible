@@ -20,6 +20,10 @@
         from_port: 80
         to_port: 80
         cidr_ip: 0.0.0.0/0
+      - proto: tcp
+        from_port: 8080
+        to_port: 8080
+        cidr_ip: 0.0.0.0/0
   register: alb_sg
 
 # 3. WAS(Target) 보안 그룹 (ALB에서 오는 8080 허용)
@@ -29,6 +33,8 @@
     description: "Allow 8080 from ALB Only"
     vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
     region: "{{ region }}"
+    tags:
+      Name: "{{ prefix }}-target-sg"
     rules:
       - proto: tcp
         from_port: 8080
@@ -43,6 +49,8 @@
     description: "Allow 8080 for Jenkins"
     vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
     region: "{{ region }}"
+    tags:
+      Name: "{{ prefix }}-jenkins-sg"
     rules:
       - proto: tcp
         from_port: 8080
