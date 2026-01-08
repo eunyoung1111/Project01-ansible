@@ -1,21 +1,17 @@
 ---
-# 1. 젠킨스가 들어갈 프라이빗 서브넷 정보 가져오기
+# [1단계] 인스턴스 생성을 위한 정보 조회 및 생성 (사용자님 코드)
 - name: Get Private Subnet info
   amazon.aws.ec2_vpc_subnet_info:
     region: "{{ region }}"
-    filters:
-      "tag:Name": "{{ prefix }}-priv-a"
+    filters: { "tag:Name": "{{ prefix }}-priv-a" }
   register: priv_subnet
 
-# 2. 젠킨스용 보안 그룹 정보 가져오기
 - name: Get Jenkins SG info
   amazon.aws.ec2_security_group_info:
     region: "{{ region }}"
-    filters:
-      "group-name": "{{ prefix }}-jenkins-sg"
+    filters: { "group-name": "{{ prefix }}-jenkins-sg" }
   register: jenkins_sg
 
-# 3. 최신 Ubuntu 22.04 LTS AMI ID 조회
 - name: Find latest Ubuntu 22.04 AMI
   amazon.aws.ec2_ami_info:
     region: "{{ region }}"
@@ -25,8 +21,8 @@
       architecture: x86_64
   register: ubuntu_ami
 
-# 4. Jenkins EC2 인스턴스 생성
-- name: Launch Jenkins EC2 Instance
+# 4. Jenkins EC2 인스턴스 생성 (수동 조치 사항 반영)
+- name: Launch Jenkins EC2 Instance with User Data
   amazon.aws.ec2_instance:
     name: "{{ prefix }}-jenkins"
     region: "{{ region }}"
@@ -35,9 +31,60 @@
     key_name: "{{ key_name }}"
     vpc_subnet_id: "{{ priv_subnet.subnets[0].id }}"
     security_groups: ["{{ jenkins_sg.security_groups[0].group_id }}"]
-    # [수정] IAM 역할 섹션에서 만든 이름과 일치시킵니다.
-    iam_instance_profile: "{{ prefix }}-ec2-profile" 
-    wait: yes # 인스턴스가 생성될 때까지 기다리도록 추가 (안정성)
+    iam_instance_profile: "{{ prefix }}-ec2-profile"
+    wait: yes
+    user_data: |
+      #!/bin/bash
+      # 1. 패키지 업데이트 및 필수 도구 설치
+      apt-get update -y
+      apt-get install -y apt-transport-https ca-certificates curl software-properties-common git unzip
+
+      # 2. Docker 및 Compose 설치
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+      echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+      apt-get update -y
+      apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+      # 3. AWS CLI v2 설치
+      curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+      unzip -o awscliv2.zip
+      ./aws/install
+
+      # 4. 프로젝트 클론 및 수동 설정 자동 반영 (Hot-fix)
+      cd /home/ubuntu
+      git clone https://github.com/sjh4616/jenkins.git
+      cd jenkins
+
+      # [SSM 조치 1] Dockerfile의 apt-get update 누락 수정
+      sed -i 's/RUN apt-get install zip unzip git curl/RUN apt-get update \&\& apt-get install -y zip unzip git curl/' Dockerfile
+
+      # [SSM 조치 2] docker-compose.yml 포트 및 Prefix 수정 (Heredoc 사용)
+      cat <<EOF > docker-compose.yml
+      version: '3.7'
+      services:
+        jenkins:
+          build:
+            context: .
+          container_name: jenkins
+          user: root
+          privileged: true
+          ports:
+            - 8080:8080
+            - 50000:50000
+          environment:
+            - JENKINS_OPTS=--prefix=/jenkins
+          volumes:
+            - ./jenkins_home:/var/jenkins_home
+            - /var/run/docker.sock:/var/run/docker.sock
+      EOF
+
+      # 5. 젠킨스 실행 (--build 포함하여 수정된 Dockerfile 반영)
+      docker compose up -d --build
+
+      # 6. 권한 설정
+      usermod -aG docker ubuntu
+      chown -R ubuntu:ubuntu /home/ubuntu/jenkins
+      
     tags:
       Role: "jenkins"
       Name: "{{ prefix }}-jenkins"
