@@ -15,9 +15,9 @@
     region: "{{ region }}"
     tags:
       Name: "{{ prefix }}-alb-sg"
-    rules:
+    rules:  # 인바운드 규칙(아웃바운드는 기본적으로 모두 허용)
       - proto: tcp
-        from_port: 80
+        from_port: 80  # HTTP
         to_port: 80
         cidr_ip: 0.0.0.0/0
       - proto: tcp
@@ -26,7 +26,7 @@
         cidr_ip: 0.0.0.0/0
   register: alb_sg
 
-# 3. WAS(Target) 보안 그룹 (ALB에서 오는 8080 허용)
+# 3. WAS(App) 보안 그룹 (ALB에서 오는 8080 허용)
 - name: Create Target Security Group
   amazon.aws.ec2_security_group:
     name: "{{ prefix }}-target-sg"
@@ -39,7 +39,7 @@
       - proto: tcp
         from_port: 8080
         to_port: 8080
-        group_id: "{{ alb_sg.group_id }}"
+        group_id: "{{ alb_sg.group_id }}" # alb 보안그룹을 통과한 트래픽만 허용   
   register: was_sg
 
 # 4. Jenkins 보안 그룹
@@ -58,7 +58,7 @@
         cidr_ip: 0.0.0.0/0
   register: jenkins_sg
 
-# 5. 다른 역할에서 참조할 수 있도록 ID 고정
+# 5. 다른 역할에서 참조할 수 있도록 ID 고정(lb, asg등과 공유)
 - set_fact:
     alb_sg_id: "{{ alb_sg.group_id }}"
     was_sg_id: "{{ was_sg.group_id }}"
