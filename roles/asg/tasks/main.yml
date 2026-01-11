@@ -2,7 +2,7 @@
 # 1. 최신 Amazon Linux 2023 AMI ID 조회
 - name: Find Latest Amazon Linux 2023 AMI
   amazon.aws.ec2_ami_info:
-    owners: ["137112412989"]
+    owners: ["137112412989"]  # AWS 공식 계정 ID
     filters:
       name: "al2023-ami-2023.*-x86_64"
     region: "{{ region }}"
@@ -16,42 +16,42 @@
       group-name: "{{ prefix }}-target-sg"
   register: was_sg_info
 
-# 3. WAS용 대상 그룹 ARN 조회
+# 3. WAS용 대상 그룹(WAS용 목적지) ARN 조회
 - name: Get WAS Target Group info
   community.aws.elb_target_group_info:
     region: "{{ region }}"
     names:
-      - "{{ prefix }}-was-tg" # 이 이름이 콘솔의 이름과 정확히 일치해야 합니다!
+      - "{{ prefix }}-was-tg" 
   register: was_tg_info
 
-# [추가] 조회 결과가 비었는지 확인하기 위한 디버그 태스크
+# 배포 전 대상그룹 있는지 확
 - name: Debug WAS Target Group Info
   debug:
     msg: "조회된 대상 그룹: {{ was_tg_info.target_groups }}"
 
 - name: Check if WAS Target Group exists
   ansible.builtin.fail:
-    msg: "대상 그룹 '{{ prefix }}-was-tg'를 찾을 수 없습니다. 이름을 확인하세요."
+    msg: "대상 그룹 '{{ prefix }}-was-tg'를 찾을 수 없습니다. loadbalance 역할이 먼저 실행되었는지 확인하세요."
   when: was_tg_info.target_groups | length == 0
 
-# 4. 프라이빗 서브넷 정보 조회
+# 4. 프라이빗 서브넷 정보 조회 : 실제 인스턴스를 프라이빗에 배치함
 - name: Get Private Subnet info for ASG
   amazon.aws.ec2_vpc_subnet_info:
     region: "{{ region }}"
     filters:
       "tag:Name": ["{{ prefix }}-priv-a", "{{ prefix }}-priv-c"]
   register: priv_subnets
+  
 # 5. 시작 템플릿(Launch Template) 생성
 - name: Create Launch Template
   amazon.aws.ec2_launch_template:
     name: "{{ prefix }}-template"
-    # [수정] 템플릿 자체에도 태그를 달아 관리하기 편하게 합니다.
     tags:
       Name: "{{ prefix }}-template"
     image_id: "{{ (al2023_ami.images | sort(attribute='creation_date') | last).image_id }}"
     instance_type: "{{ instance_type }}"
     key_name: "{{ key_name }}"
-    iam_instance_profile: "{{ prefix }}-ec2-profile"
+    iam_instance_profile: "{{ prefix }}-ec2-profile"  # S3/CodeDeploy 권한 신분증 부여
     security_group_ids: ["{{ was_sg_info.security_groups[0].group_id }}"]
     user_data: "{{ user_data_script | b64encode }}"
     tag_specifications:
@@ -61,29 +61,29 @@
           Project: "PetClinic"
       - resource_type: volume
         tags:
-          Name: "{{ prefix }}-app-disk" # 볼륨 이름도 같이 지정 (SAA 추천)
+          Name: "{{ prefix }}-app-disk" # 볼륨 이름
     region: "{{ region }}"
     state: present
-  register: lt_info # 생성된 템플릿 정보를 기록
+  register: lt_info
   vars:
     user_data_script: |
       #!/bin/bash
-      # 1. Amazon Linux 2023 도커 및 도구 설치
+      # (1) 도커 및 필수 패키지 설치
       dnf update -y
       dnf install -y docker ruby wget
       systemctl start docker
       systemctl enable docker
       usermod -aG docker ec2-user
 
-      # 2. 도커 컴포즈 V2 플러그인 설치 (표준 경로로 변경)
+      # (2) 도커 컴포즈 V2 설치 (표준 경로 사용용)
       mkdir -p /usr/lib/docker/cli-plugins
       curl -SL https://github.com/docker/compose/releases/download/v2.20.2/docker-compose-linux-x86_64 -o /usr/lib/docker/cli-plugins/docker-compose
       chmod +x /usr/lib/docker/cli-plugins/docker-compose
 
-      # 3. 심볼릭 링크 생성 (docker-compose와 docker compose 모두 작동하게 함)
+      # (3) 심볼릭 링크 생성 (docker-compose와 docker compose 모두 작동하게 함)
       ln -sf /usr/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
       
-      # 4. CodeDeploy 에이전트 설치
+      # (4) CodeDeploy 에이전트 설치
       cd /home/ec2-user
       wget https://aws-codedeploy-ap-northeast-2.s3.ap-northeast-2.amazonaws.com/latest/install
       chmod +x ./install
@@ -97,18 +97,18 @@
     name: "{{ prefix }}-was-asg" 
     launch_template:
       launch_template_name: "{{ prefix }}-template"
-      version: "$Latest" # 항상 최신 버전의 템플릿을 쓰도록 강제
+      version: "$Latest" # 항상 최신 버전의 템플릿 사용
     min_size: 1
     max_size: 3
-    desired_capacity: 1
+    desired_capacity: 1  # 평소 유지할 대수
     vpc_zone_identifier: "{{ priv_subnets.subnets | map(attribute='id') | list }}"
     target_group_arns: "{{ was_tg_info.target_groups | map(attribute='target_group_arn') | list }}"
-    # [SAA 추천] WAS는 앱 상태가 중요하므로 EC2가 아닌 ELB(ALB) 기준으로 체크하세요!
+    # 인스턴스가 단순히 켜져 있는지(EC2 체크)만 보는 게 아니라,
+    # 실제 웹 서비스가 살아있는지(ELB 체크) 확인하여 불량 인스턴스를 교체
     health_check_type: ELB 
     health_check_period: 300
     region: "{{ region }}"
     state: present
-    # [태그 전파] 이 부분은 유지하되, 시작 템플릿과 이름을 일치시킵니다.
     tags:
       - Key: Name
         Value: "{{ prefix }}-app"
