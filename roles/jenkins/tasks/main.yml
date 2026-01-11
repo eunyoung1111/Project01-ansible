@@ -1,51 +1,51 @@
 ---
-# [1단계] 인스턴스 생성을 위한 정보 조회 및 생성 (사용자님 코드)
+# 인스턴스 생성을 위한 정보 조회 및 생성
 - name: Get Private Subnet info
   amazon.aws.ec2_vpc_subnet_info:
     region: "{{ region }}"
-    filters: { "tag:Name": "{{ prefix }}-priv-a" }
+    filters: { "tag:Name": "{{ prefix }}-priv-a" }  # 프라이빗에 생성
   register: priv_subnet
 
 - name: Get Jenkins SG info
   amazon.aws.ec2_security_group_info:
     region: "{{ region }}"
-    filters: { "group-name": "{{ prefix }}-jenkins-sg" }
+    filters: { "group-name": "{{ prefix }}-jenkins-sg" }  # 젠킨스 보안그룹 조회
   register: jenkins_sg
 
 - name: Find latest Ubuntu 22.04 AMI
   amazon.aws.ec2_ami_info:
     region: "{{ region }}"
-    owners: ["099720109477"]
+    owners: ["099720109477"]  # ubuntu 공식 배포처 ID
     filters:
       name: "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"
       architecture: x86_64
   register: ubuntu_ami
 
-# 4. Jenkins EC2 인스턴스 생성 (수동 조치 사항 반영)
+# 2. Jenkins EC2 생성 및 SW 설치
 - name: Launch Jenkins EC2 Instance with User Data
   amazon.aws.ec2_instance:
     name: "{{ prefix }}-jenkins"
     region: "{{ region }}"
     image_id: "{{ (ubuntu_ami.images | sort(attribute='creation_date') | last).image_id }}"
-    instance_type: "t3.large"
+    instance_type: "t3.large"   
     key_name: "{{ key_name }}"
     vpc_subnet_id: "{{ priv_subnet.subnets[0].id }}"
     security_groups: ["{{ jenkins_sg.security_groups[0].group_id }}"]
     iam_instance_profile: "{{ prefix }}-ec2-profile"
     wait: yes
     volumes:
-      - device_name: /dev/sda1 # Ubuntu의 기본 루트 장치 이름
+      - device_name: /dev/sda1
         ebs:
           volume_size: 30
           volume_type: gp3 
-          delete_on_termination: yes
+          delete_on_termination: no
     user_data: |
       #!/bin/bash
       # 1. 패키지 업데이트 및 필수 도구 설치
       apt-get update -y
       apt-get install -y apt-transport-https ca-certificates curl software-properties-common git unzip
 
-      # 2. Docker 및 Compose 설치
+      # 2. Docker 및 Compose 플러그인 설치
       curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
       echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
       apt-get update -y
@@ -61,10 +61,8 @@
       git clone https://github.com/sjh4616/jenkins.git
       cd jenkins
 
-      # [SSM 조치 1] Dockerfile의 apt-get update 누락 수정
       sed -i 's/RUN apt-get install zip unzip git curl/RUN apt-get update \&\& apt-get install -y zip unzip git curl/' Dockerfile
 
-      # [SSM 조치 2] docker-compose.yml 포트 및 Prefix 수정 (Heredoc 사용)
       cat <<EOF > docker-compose.yml
       version: '3.7'
       services:
@@ -81,13 +79,13 @@
             - JENKINS_OPTS=--prefix=/jenkins
           volumes:
             - ./jenkins_home:/var/jenkins_home
-            - /var/run/docker.sock:/var/run/docker.sock
+            - /var/run/docker.sock:/var/run/docker.sock   # 호스트 도커 엔진 공유
       EOF
 
-      # 5. 젠킨스 실행 (--build 포함하여 수정된 Dockerfile 반영)
+      # 5. 젠킨스 실행
       docker compose up -d --build
 
-      # 6. 권한 설정
+      # 6. 관리자 권한 설정
       usermod -aG docker ubuntu
       chown -R ubuntu:ubuntu /home/ubuntu/jenkins
       
