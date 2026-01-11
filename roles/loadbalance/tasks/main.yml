@@ -6,14 +6,14 @@
     filters: { "tag:Name": "{{ prefix }}-vpc" }
   register: vpc_info
 
-# 2. ALB용 보안 그룹 정보 조회 (alb_sg_id 정의 에러 방지)
+# 2. ALB용 보안 그룹 정보 조회
 - name: Get ALB Security Group info
   amazon.aws.ec2_security_group_info:
     region: "{{ region }}"
     filters: { "group-name": "{{ prefix }}-alb-sg" }
   register: alb_sg_info
 
-# 3. 퍼블릭 서브넷 정보 조회 (ALB는 퍼블릭에 위치해야 함)
+# 3. lb가 위차 할 퍼블릭 서브넷 정보 조회
 - name: Get Public Subnet info
   amazon.aws.ec2_vpc_subnet_info:
     region: "{{ region }}"
@@ -21,7 +21,7 @@
       "tag:Name": ["{{ prefix }}-pub-a", "{{ prefix }}-pub-c"]
   register: pub_subnets
 
-# 4. 젠킨스 인스턴스 정보 조회 (Running 상태)
+# 4. 젠킨스 인스턴스 정보 조회 (대상 그룹에 등록하기 위함)
 - name: Get Info for Jenkins Instance
   amazon.aws.ec2_instance_info:
     region: "{{ region }}"
@@ -38,9 +38,10 @@
     port: 8080
     vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
     region: "{{ region }}"
+    # 젠킨스는 주소 뒤에 /jenkins가 붙으므로 로그인 페이지로 상태 검사 수행
     health_check_path: /jenkins/login
     health_check_protocol: HTTP
-    # 인스턴스가 조회되었을 때만 대상을 등록합니다.
+    # 인스턴스가 조회되었을 때만 대상을 등록록
     targets: "{{ [{'Id': jenkins_info.instances[0].instance_id}] if jenkins_info.instances | length > 0 else [] }}"
     state: present
   register: jenkins_tg
@@ -58,29 +59,29 @@
     state: present
   register: was_tg
 
-# 7. [최종] ALB 생성 및 리스너/규칙 통합 설정
+# 7. ALB 생성 및 리스너/규칙 통합 설정
 - name: Create ALB with Path Rules Integrated
   amazon.aws.elb_application_lb:
     name: "{{ prefix }}-alb"
     # 조회한 보안 그룹 ID와 서브넷 ID 리스트를 사용합니다.
     security_groups: ["{{ alb_sg_info.security_groups[0].group_id }}"]
-    subnets: "{{ pub_subnets.subnets | map(attribute='id') | list }}"
+    subnets: "{{ pub_subnets.subnets | map(attribute='id') | list }}"  # 2개 AZ에 걸쳐 생성(고가용성)
     region: "{{ region }}"
     state: present
     wait: yes
     listeners:
       - Protocol: HTTP
-        Port: 80
+        Port: 80  # 사용자가 접속하는 포트
         DefaultActions:
           - Type: forward
-            TargetGroupArn: "{{ was_tg.target_group_arn }}"
-        # [SAA 핵심] 경로 기반 라우팅 규칙 설정
+            TargetGroupArn: "{{ was_tg.target_group_arn }}"  # 기본적으로는 WAS 서버로 보냄
+        # 경로 기반 라우팅 규칙
         Rules:
-          - Priority: 1
+          - Priority: 1  # 숫자가 낮을수록 우선순위 높음
             Conditions:
               - Field: path-pattern
-                Values: ['/jenkins*']
+                Values: ['/jenkins*']  # 주소창에 /jenkins가 포함되면
             Actions:
               - Type: forward
-                TargetGroupArn: "{{ jenkins_tg.target_group_arn }}"
+                TargetGroupArn: "{{ jenkins_tg.target_group_arn }}"  # 젠킨스 서버로 보
   register: alb_result
