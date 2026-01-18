@@ -26,5 +26,5 @@
 4. 인프라 파기: `ansible-playbook cleanup.yml`
 
 ## 📌 아키텍처
-![architecture](images/AWS_architecture.png.png)
-![ServiceAccessFlow](images/Service_Access_Flow.png)
+![architecture](./image/AWS_architecture.png)
+![ServiceAccessFlow](./image/Service_Access_Flow.png)
