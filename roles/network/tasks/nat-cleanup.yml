@@ -1,0 +1,34 @@
+---
+# 2. 기존 자원 제거(NAT GW, EIP) - 충돌반지, 멱등성 보장
+- name: Get existing NAT Gateway info
+  amazon.aws.ec2_vpc_nat_gateway_info:
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "{{ prefix }}-nat-gw"
+      state: ['available', 'pending']
+  register: existing_nat_info
+
+- name: Delete existing NAT Gateway
+  amazon.aws.ec2_vpc_nat_gateway:
+    region: "{{ region }}"
+    nat_gateway_id: "{{ item.nat_gateway_id }}"
+    state: absent
+    wait: yes
+    wait_timeout: 600
+  loop: "{{ existing_nat_info.nat_gateways }}"
+  when: existing_nat_info.nat_gateways | length > 0  
+
+- name: Get existing EIP info
+  amazon.aws.ec2_eip_info:
+    region: "{{ region }}"
+    filters:
+      "tag:Name": "{{ prefix }}-nat-eip"
+  register: existing_eip_info
+
+- name: Release existing EIP
+  amazon.aws.ec2_eip:
+    region: "{{ region }}"
+    allocation_id: "{{ item.allocation_id }}"
+    state: absent
+  loop: "{{ existing_eip_info.addresses }}"
+  when: existing_eip_info.addresses | length > 0

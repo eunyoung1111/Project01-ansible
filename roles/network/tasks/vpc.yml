@@ -1,0 +1,11 @@
+---
+# 1. VPC 생성
+- name: Create VPC
+  amazon.aws.ec2_vpc_net:
+    name: "{{ prefix }}-vpc"
+    cidr_block: "{{ vpc_cidr }}"
+    region: "{{ region }}"
+    dns_hostnames: yes  # 퍼블릭 DNS를 갖게함
+    dns_support: yes
+    state: present
+  register: vpc_result

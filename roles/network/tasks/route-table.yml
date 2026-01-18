@@ -1,0 +1,31 @@
+---
+# 8. 퍼블릭RT 생성: 모든 트래픽(0.0.0.0/0)을 IGW로 보냄냄
+- name: Create Public Route Table
+  amazon.aws.ec2_vpc_route_table:
+    vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
+    region: "{{ region }}"
+    tags:
+      Name: "{{ prefix }}-pub-rt"
+    # pub 서브넷 명시적으로 연결
+    subnets: "{{ subnet_info.subnets | selectattr('tags.Name', 'search', 'pub') | map(attribute='id') | list }}"
+    routes:
+      - dest: 0.0.0.0/0 # 모든 외부 목적지
+        gateway_id: "{{ igw_info.internet_gateways[0].internet_gateway_id }}"
+
+# 9. 프라이빗RT 생성: 모든 트래픽을 NAT GW로 보냄
+- name: Create Private Route Table
+  amazon.aws.ec2_vpc_route_table:
+    vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
+    region: "{{ region }}"
+    tags:
+      Name: "{{ prefix }}-priv-rt"
+    # priv 서브넷 명시적 연결
+    subnets: "{{ subnet_info.subnets | selectattr('tags.Name', 'search', 'priv') | map(attribute='id') | list }}"
+    routes:
+      - dest: 0.0.0.0/0
+        nat_gateway_id: >-
+          {{ 
+            new_nat_gw.nat_gateway_id if (new_nat_gw.nat_gateway_id is defined) 
+            else (nat_info.nat_gateways | selectattr('state', 'equalto', 'available') | list | first | default({'nat_gateway_id': ''})).nat_gateway_id 
+          }}
+  when: (new_nat_gw.nat_gateway_id is defined) or (nat_info.nat_gateways | length > 0)

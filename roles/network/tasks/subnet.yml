@@ -1,0 +1,14 @@
+---
+# 4. 서브넷 생성 - pub2, priv2
+- name: Create Subnets
+  amazon.aws.ec2_vpc_subnet:
+    vpc_id: "{{ vpc_result.vpc.id }}"
+    region: "{{ region }}"
+    az: "{{ item.az }}"
+    cidr: "{{ item.cidr }}"
+    map_public: "{{ item.public }}" 
+    state: present
+    tags:
+      Name: "{{ prefix }}-{{ item.name }}"
+  loop: "{{ subnet_list }}"
+  register: subnet_results

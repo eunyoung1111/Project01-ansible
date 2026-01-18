@@ -1,0 +1,27 @@
+---
+# 7. RT생성을 위한 최신 리소스 정보 조회
+- name: Get VPC Info
+  amazon.aws.ec2_vpc_net_info:
+    region: "{{ region }}"
+    filters: { "tag:Name": "{{ prefix }}-vpc" }
+  register: vpc_info
+
+- name: Get IGW Info
+  amazon.aws.ec2_vpc_igw_info:
+    region: "{{ region }}"
+    filters: { "tag:Name": "{{ prefix }}-igw" }
+  register: igw_info
+
+- name: Get NAT GW Info
+  amazon.aws.ec2_vpc_nat_gateway_info:
+    region: "{{ region }}"
+    filters: 
+      "tag:Name": "{{ prefix }}-nat-gw"
+      state: ['available', 'pending']
+  register: nat_info
+
+- name: Get Subnet Info
+  amazon.aws.ec2_vpc_subnet_info:
+    region: "{{ region }}"
+    filters: { vpc-id: "{{ vpc_info.vpcs[0].vpc_id }}" }
+  register: subnet_info

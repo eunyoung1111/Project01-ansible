@@ -1,6 +1,0 @@
-# inventory.yml
-# test_수정
-all:
-  hosts:
-    localhost:
-      ansible_connection: local

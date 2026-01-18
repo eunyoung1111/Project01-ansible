@@ -1,0 +1,28 @@
+---
+
+# 7. ALB 생성 및 리스너/규칙 통합 설정
+- name: Create ALB with Path Rules Integrated
+  amazon.aws.elb_application_lb:
+    name: "{{ prefix }}-alb"
+    # 조회한 보안 그룹 ID와 서브넷 ID 리스트를 사용합니다.
+    security_groups: ["{{ alb_sg_info.security_groups[0].group_id }}"]
+    subnets: "{{ pub_subnets.subnets | map(attribute='id') | list }}"  # 2개 AZ에 걸쳐 생성(고가용성)
+    region: "{{ region }}"
+    state: present
+    wait: yes
+    listeners:
+      - Protocol: HTTP
+        Port: 80  # 사용자가 접속하는 포트
+        DefaultActions:
+          - Type: forward
+            TargetGroupArn: "{{ was_tg.target_group_arn }}"  # 기본적으로는 WAS 서버로 보냄
+        # 경로 기반 라우팅 규칙
+        Rules:
+          - Priority: 1  # 숫자가 낮을수록 우선순위 높음
+            Conditions:
+              - Field: path-pattern
+                Values: ['/jenkins*']  # 주소창에 /jenkins가 포함되면
+            Actions:
+              - Type: forward
+                TargetGroupArn: "{{ jenkins_tg.target_group_arn }}"  # 젠킨스 서버로 보
+  register: alb_result

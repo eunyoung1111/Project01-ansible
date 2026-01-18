@@ -1,0 +1,30 @@
+---
+
+# 5. 젠킨스용 대상 그룹 생성
+- name: Create Jenkins Target Group
+  community.aws.elb_target_group:
+    name: "{{ prefix }}-jenkins-tg"
+    protocol: http
+    port: 8080
+    vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
+    region: "{{ region }}"
+    # 젠킨스는 주소 뒤에 /jenkins가 붙으므로 로그인 페이지로 상태 검사 수행
+    health_check_path: /jenkins/login
+    health_check_protocol: HTTP
+    # 인스턴스가 조회되었을 때만 대상을 등록록
+    targets: "{{ [{'Id': jenkins_info.instances[0].instance_id}] if jenkins_info.instances | length > 0 else [] }}"
+    state: present
+  register: jenkins_tg
+
+# 6. WAS용 대상 그룹 생성 (오토스케일링 그룹에서 사용)
+- name: Create WAS Target Group
+  community.aws.elb_target_group:
+    name: "{{ prefix }}-was-tg"
+    protocol: http
+    port: 8080
+    vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
+    region: "{{ region }}"
+    health_check_path: /
+    health_check_protocol: HTTP
+    state: present
+  register: was_tg
